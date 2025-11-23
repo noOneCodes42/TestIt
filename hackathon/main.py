@@ -1,9 +1,11 @@
 from multiprocessing.dummy import Array
 import os
+from pickletools import optimize
 import tempfile
 import json
 import io
 from uuid import UUID
+from pyparsing import Opt
 from requests import get
 from fastapi import FastAPI, File, UploadFile, Response, Request, Cookie, HTTPException, Form, Depends, Body
 from fastapi.middleware.cors import CORSMiddleware
@@ -720,6 +722,7 @@ async def fetch_quiz(quiz_id: str, classroom_id: str, request: Request):
             quiz_info = supabase.table("Q&A").select("question_text, options, correct_answer").eq("quiz_id", quiz_id).execute()
             print(quiz_info.data)
             return quiz_info.data
+        
                 
                 
         else:
@@ -792,7 +795,7 @@ async def submit_quiz_results(quiz_id: str, request: Request, answer: str):
         }
         
         # Insert into quiz_results table (create this table if it doesn't exist)
-        supabase.table("quiz_submissions").insert(result_data).execute()
+        supabase.table("quiz-submissions").insert(result_data).execute()
         
         # Mark quiz as completed for this user
         supabase.table("quizzes")\
@@ -803,9 +806,7 @@ async def submit_quiz_results(quiz_id: str, request: Request, answer: str):
         return {
             "status": "success",
             "score": score,
-            "total_questions": total_questions,
-            "percentage": percentage,
-            "user_answers": answers_list,
+            "answer": answers_list,
             "correct_answers": correct_answers_list
         }
 
@@ -896,7 +897,7 @@ A: [option A]
 B: [option B]
 C: [option C]
 D: [option D]
-Correct: [A/B/C/D]
+Correct: [A/B/C/D] LETTER NOT TEXT
 
 Make questions relevant to the content.
 """
@@ -923,7 +924,7 @@ Make questions relevant to the content.
             if correct_letter not in {"A", "B", "C", "D"}:
                 continue
             
-            correct_answer = [options[ord(correct_letter) - 65]]
+            correct_answer = [correct_letter]
             
             questions.append({
                 "question_text": question_text,
@@ -981,3 +982,17 @@ Make questions relevant to the content.
     except Exception as e:
         print(f"Error generating quiz: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+# question_text, options, correct_answer
+
+@app.post("/updated-generate-quiz")
+async def updated_generate_quiz(question: str, options: list, correct_answer: list, id: str):
+    supabase.table("Q&A").update({
+        "question_text": question,
+        "options": options,
+        "correct_answer": correct_answer
+    }).eq("quiz_id", id).execute()
+    new_results = supabase.table("Q&A").select("question_text, options, correct_answer").eq("quiz_id", id).execute()
+
+    return {
+        new_results.data
+    }
