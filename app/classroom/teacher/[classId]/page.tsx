@@ -80,16 +80,16 @@ const QuizContent = ({ classroomId, quizId }: any) => {
   if (!quizData) {
     return <div>No quiz data found</div>
   }
-
+  const mappings = ["A", "B", "C", "D"]
   return (
     <div>
-      {quizData.map((e:any) => {
-        return <div>
+      {quizData.map((e:any, k:number) => {
+        return <div key={k}>
           <p className="text-white text-xl mb-4">{e.question_text}</p>
           <RadioGroup className="mb-4">
            {e.options.map((j:string, i:number) => {
             return  <div key={i} className="flex items-center gap-3" defaultValue={e.correct_answer[0]}>
-              <RadioGroupItem disabled value={j} id={`r${i}`} className={`w-4 h-4 ${e.correct_answer[0] == j ? "bg-blue-700" : "bg-black"} rounded-full`} />
+              <RadioGroupItem disabled value={j} id={`r${i}`} className={`w-4 h-4 ${i == mappings.indexOf(e.correct_answer[0]) ? "bg-blue-700" : "bg-black"} rounded-full`} />
               <Label htmlFor={`r${i}`}>{j}</Label>
             </div>
            })}

@@ -35,6 +35,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { FileUpload } from "@/components/ui/file-upload"
+import { Spinner } from "@/components/ui/spinner"
 
 // Updated schema to include name field
 const formSchema = z.object({
@@ -57,6 +58,7 @@ const formSchema = z.object({
 })
 
 function CreateQuizForm({classId}: {classId: string}) {
+  const [loading, setLoading] = React.useState(false)
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
     defaultValues: {
@@ -83,7 +85,7 @@ function CreateQuizForm({classId}: {classId: string}) {
     formData.append('mcq', data.mcq.toString())
     formData.append('frq', '0') // Always set frq to 0 as requested
     formData.append('classroom_id', classId) // Always set frq to 0 as requested
-
+    setLoading(true)
 
     let req = await fetch(`${process.env.NEXT_PUBLIC_URL}/generate-quiz`, {
       method: "POST",
@@ -95,10 +97,13 @@ function CreateQuizForm({classId}: {classId: string}) {
       try {
         const json = await req.json()
         form.setError("root", {message: JSON.stringify(json.detail)})
+        setLoading(false)
       } catch(_) {
         form.setError("root", {message: "An Internal Server Error has occurred, please try again"})
+        setLoading(false)
       }
     } else {
+        setLoading(false)
       window.location.reload()
     }
   }
@@ -266,7 +271,9 @@ function CreateQuizForm({classId}: {classId: string}) {
             Submit
           </Button>
         </Field>
+        
       </CardFooter>
+      {loading ? <div className="grid place-items-center w-full"><p className="text-center text-neutral-50">Please wait on this page, it may take a moment...</p><Spinner className="w-[50px] h-[50px] text-white"></Spinner></div> : ""}
       {form.formState.errors.root && (
         <p className="text-red-700 pl-6 text-sm" style={{lineBreak: "anywhere"}}>
           {form.formState.errors.root.message}

@@ -68,8 +68,6 @@ const QuizContent = ({ classroomId, quizId, ref }: any) => {
    // Move ALL hooks to the top, before any conditional returns
   const [answers, setAnswers] = useState<number[]>([])
   const [err, setError] = useState("")
-  const [score, setScore] = useState({score: 0, loading: true})
-  const [open, setOpen] = useState(false)
   // Initialize answers once when quizData is available
   useEffect(() => {
     if (quizData && answers.length === 0) {
@@ -94,22 +92,7 @@ const QuizContent = ({ classroomId, quizId, ref }: any) => {
   }
   return (
     <div className="space-y-4">
-              <Dialog open={open}>
-  <DialogContent>
-    <DialogHeader>
-      <DialogTitle>Quiz Score</DialogTitle>
-      <DialogDescription asChild>
-          {score.loading ? <div className="w-full grid place-items-center bg-neutral-700">
-            <Spinner className="w-[150px] h-[150px]"></Spinner>
-          </div> : <div>
-            <p className="text-2xl text-white text-center">You got a {score.score}  {answers.length}, which is:</p>
-            <p className="text-5xl text-white text-center">{(score.score / answers.length).toFixed(1)}%</p>  
-          </div>}
-      </DialogDescription>
-    </DialogHeader>
-  </DialogContent>
-</Dialog>
-      {quizData.map((e:any, k:number) => {
+      {quizData[0].map((e:any, k:number) => {
         return <div key={k} className="border-2 rounded-2xl p-4 border-neutral-700">
           <p className="text-white text-xl mb-4">{k+1}. {e.question_text}</p>
           <RadioGroup className="mb-4">
@@ -132,9 +115,9 @@ const QuizContent = ({ classroomId, quizId, ref }: any) => {
       })}
       <div className="w-full grid place-items-center">
         <p className="text-red-700 text-xl text-center" style={{lineBreak: "anywhere"}}>{err}</p>
-        <Button variant={"secondary"} onClick={async () => {
-          setOpen(true)
+        <Button variant={"secondary"} disabled={answers.indexOf(-1) != -1} onClick={async () => {
           const letters = ["A", "B", "C", "D"]
+          ref.current?.click()
           try {
             const req = await fetch(`${process.env.NEXT_PUBLIC_URL}/results/${quizId}/answers/${answers.map(e => letters[e]).join("")}`, {
               method: "POST",
@@ -145,7 +128,11 @@ const QuizContent = ({ classroomId, quizId, ref }: any) => {
               setError(JSON.stringify(json.detail))
             } else {
               const json = await req.json()
-              setScore({score: json.score, loading: false})
+              let {correct_answers, user_answers} = json
+              user_answers = user_answers[0].split("")
+              const score = correct_answers.filter((e: number, i: number) => e == user_answers[i]).length
+              alert(`You got a ${score} out of ${answers.length}, which is: ${(score / answers.length * 100).toFixed(1)}%`)
+              window.location.reload()
             }
           } catch(_) {
             setError("An internal server error has occured, please try again")
@@ -178,16 +165,17 @@ const ReviewQuizContent = ({ classroomId, quizId }: any) => {
   if (!quizData) {
     return <div>No quiz data found</div>
   }
-
+  const mappings = ["A", "B", "C", "D"]
+  const user_answers = JSON.parse(quizData[1][0].answer)[0].split("")
   return (
     <div>
-      {quizData.map((e:any, k: number) => {
+      {quizData[0].map((e:any, k: number) => {
         return <div key={k}>
           <p className="text-white text-xl mb-4">{e.question_text}</p>
           <RadioGroup className="mb-4">
            {e.options.map((j:string, i:number) => {
             return  <div key={i} className="flex items-center gap-3" defaultValue={e.correct_answer[0]}>
-              <RadioGroupItem disabled value={j} id={`r${i}`} className={`w-4 h-4 ${e.correct_answer[0] == j ? "bg-blue-700" : "bg-black"} rounded-full`} />
+              <RadioGroupItem disabled value={j} id={`r${i}`} className={`w-4 h-4 ${mappings.indexOf(e.correct_answer[0]) == i ?  "bg-blue-700" : user_answers[k] == mappings[i] ? "bg-red-700" :  "bg-black"} rounded-full`} />
               <Label htmlFor={`r${i}`}>{j}</Label>
             </div>
            })}
