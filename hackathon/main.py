@@ -720,15 +720,17 @@ async def fetch_quiz(quiz_id: str, classroom_id: str, request: Request):
 
         if user_role == "teacher" or completed_status:
             quiz_info = supabase.table("Q&A").select("question_text, options, correct_answer").eq("quiz_id", quiz_id).execute()
-            print(quiz_info.data)
-            return quiz_info.data
+            quiz_submission = supabase.table("quiz-submissions").select("answer").eq("quiz_id", quiz_id).eq("student_id", user_id).execute()
+            return quiz_info.data, quiz_submission.data
+            
         
                 
                 
         else:
             student_quiz_info = supabase.table("Q&A").select("question_text, options").eq("quiz_id", quiz_id).execute()
+            quiz_submission = supabase.table("quiz-submissions").select("answer").eq("quiz_id", quiz_id).eq("student_id", user_id).execute()
 
-            return student_quiz_info.data
+            return student_quiz_info.data, quiz_submission.data
             
 
     except HTTPException:
@@ -742,46 +744,81 @@ async def submit_quiz_results(quiz_id: str, request: Request, answer: str):
     access_token = get_signed_cookie(request, "access_token")
     if not access_token:
         raise HTTPException(status_code=401, detail="Not authenticated")
+    
     try:
         user = supabase.auth.get_user(access_token)
         user_id = user.user.id
         
         # Convert user answers string to list
         answers_list = answer.split(",")
+        print(f"🔍 DEBUG: User answers received: {answers_list}")
+        print(f"🔍 DEBUG: Number of user answers: {len(answers_list)}")
         
-        # Get correct answers from Q&A table (not quizzes table)
+        # Get ALL questions for this quiz with detailed info
         quiz_questions = supabase.table("Q&A")\
-            .select("correct_answer")\
+            .select("id, question_text, options, correct_answer")\
             .eq("quiz_id", quiz_id)\
             .execute()
         
-        # Extract correct answers into a list
-        correct_answers_list = []
-        for question in quiz_questions.data:
-            # Handle if correct_answer is stored as array or string
-            correct_answer = question["correct_answer"]
-            if isinstance(correct_answer, list) and len(correct_answer) > 0:
-                correct_answers_list.append(correct_answer[0])  # Get first element if it's an array
-            else:
-                correct_answers_list.append(str(correct_answer).strip())
+        if not quiz_questions.data:
+            raise HTTPException(status_code=404, detail="No questions found for this quiz")
         
-        print(f"User answers: {answers_list}")
-        print(f"Correct answers: {correct_answers_list}")
+        print(f"🔍 DEBUG: Found {len(quiz_questions.data)} questions in database")
+        
+        # Extract correct answers and debug each one
+        correct_answers_list = []
+        for i, question in enumerate(quiz_questions.data):
+            correct_answer_data = question["correct_answer"]
+            print(f"🔍 DEBUG: Question {i+1} - ID: {question['id']}")
+            print(f"🔍 DEBUG: Question text: {question['question_text'][:50]}...")
+            print(f"🔍 DEBUG: Options: {question['options']}")
+            print(f"🔍 DEBUG: Raw correct_answer: {correct_answer_data}")
+            print(f"🔍 DEBUG: Type of correct_answer: {type(correct_answer_data)}")
+            
+            # Handle different storage formats
+            if correct_answer_data is None:
+                correct_letter = ""
+                print(f"❌ ERROR: No correct answer for question {i+1}")
+            elif isinstance(correct_answer_data, list):
+                if len(correct_answer_data) > 0:
+                    correct_letter = str(correct_answer_data[0]).strip().upper()
+                    print(f"✅ List format - Extracted: '{correct_letter}'")
+                else:
+                    correct_letter = ""
+                    print(f"❌ ERROR: Empty list for question {i+1}")
+            else:
+                correct_letter = str(correct_answer_data).strip().upper()
+                print(f"✅ String format - Extracted: '{correct_letter}'")
+            
+            correct_answers_list.append(correct_letter)
+        
+        print(f"🔍 DEBUG: Final correct answers list: {correct_answers_list}")
+        print(f"🔍 DEBUG: Final user answers list: {answers_list}")
         
         # Calculate score
         score = 0
         total_questions = len(correct_answers_list)
         
-        # Check each answer
+        # Check if we have matching number of questions
+        if len(answers_list) != total_questions:
+            print(f"⚠️ WARNING: User provided {len(answers_list)} answers but there are {total_questions} questions")
+        
+        # Check each answer with detailed comparison
+        print("🔍 DEBUG: Starting answer comparison:")
         for i in range(min(len(answers_list), total_questions)):
             user_answer = answers_list[i].strip().upper()
-            correct_answer = correct_answers_list[i].strip().upper()
+            correct_answer = correct_answers_list[i]
+            
+            print(f"🔍 DEBUG: Q{i+1} - User: '{user_answer}' vs Correct: '{correct_answer}'")
+            print(f"🔍 DEBUG: Q{i+1} - Are they equal? {user_answer == correct_answer}")
             
             if user_answer == correct_answer:
                 score += 1
-                print(f"Question {i+1}: ✓ Correct")
+                print(f"✅ Question {i+1}: CORRECT - Score now: {score}")
             else:
-                print(f"Question {i+1}: ✗ Wrong (User: {user_answer}, Correct: {correct_answer})")
+                print(f"❌ Question {i+1}: WRONG - User: {user_answer}, Correct: {correct_answer}")
+        
+        print(f"🔍 DEBUG: Final score: {score}/{total_questions}")
         
         # Calculate percentage
         percentage = (score / total_questions) * 100 if total_questions > 0 else 0
@@ -794,26 +831,30 @@ async def submit_quiz_results(quiz_id: str, request: Request, answer: str):
             "score": score
         }
         
-        # Insert into quiz_results table (create this table if it doesn't exist)
-        supabase.table("quiz-submissions").insert(result_data).execute()
+        print(f"🔍 DEBUG: Saving to quiz-submissions: {result_data}")
+        
+        # Insert into quiz-submissions table
+        submission_result = supabase.table("quiz-submissions").insert(result_data).execute()
+        print(f"🔍 DEBUG: Submission result: {submission_result.data}")
         
         # Mark quiz as completed for this user
-        supabase.table("quizzes")\
+        update_result = supabase.table("quizzes")\
             .update({"is_completed": True})\
             .eq("id", quiz_id)\
             .execute()
+        print(f"🔍 DEBUG: Quiz update result: {update_result.data}")
         
         return {
             "status": "success",
-            "score": score,
-            "answer": answers_list,
-            "correct_answers": correct_answers_list
+            "user_answers": answers_list,
+            "correct_answers": correct_answers_list,
         }
+        
 
-    except HTTPException:
-        raise
     except Exception as e:
-        print(f"Error submitting quiz: {str(e)}")
+        print(f"❌ ERROR in submit_quiz_results: {str(e)}")
+        import traceback
+        print(f"❌ Stack trace: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
 
     
