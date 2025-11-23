@@ -9,7 +9,7 @@ import {
 } from "@tabler/icons-react";
 import { motion } from "motion/react";
 import { cn } from "@/lib/utils";
-import { BookIcon } from "lucide-react";
+import { ArrowLeftIcon, BookIcon } from "lucide-react";
 import { PixelatedCanvas } from "@/components/ui/pixelated-canvas";
 import { TabProvider, useTab } from "./context";
 
@@ -20,17 +20,17 @@ interface data {
 export function SpecialSidebar({data}: data) {
   const links = [
     {
+      label: "Back",
+      href: "#",
+      icon: (
+        <ArrowLeftIcon className="h-5 w-5 shrink-0 text-neutral-200" />
+      ),
+    },
+    {
       label: "Quizzes",
       href: "#",
       icon: (
         <BookIcon className="h-5 w-5 shrink-0 text-neutral-200" />
-      ),
-    },
-    {
-      label: "Teacher Profile",
-      href: "#",
-      icon: (
-        <IconUserBolt className="h-5 w-5 shrink-0 text-neutral-200" />
       ),
     }
   ];
@@ -54,7 +54,11 @@ export function SpecialSidebar({data}: data) {
               {links.map((link, idx) => (
                 <SidebarLink key={idx} link={link} onClick={() => {
                   setOpen(false)
-                  ctx.setCurrentTab(idx == 0 ? "quiz" : idx == 1 ? "profile" : "")
+                  if(idx == 0) {
+                    window.location.assign("/")
+                  } else {
+                    ctx.setCurrentTab(idx == 1 ? "quiz" : "")
+                  }
                 }}/>
               ))}
             </div>

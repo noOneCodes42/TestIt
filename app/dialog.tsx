@@ -110,7 +110,7 @@ function UserSignupForm() {
               render={({ field, fieldState }) => (
                 <Field data-invalid={fieldState.invalid}>
                   <FieldLabel htmlFor="form-rhf-signin-email" className="text-neutral-200">
-                    Username
+                    Email
                   </FieldLabel>
                   <Input
                     {...field}
@@ -304,7 +304,7 @@ function UserLoginForm() {
               render={({ field, fieldState }) => (
                 <Field data-invalid={fieldState.invalid}>
                   <FieldLabel htmlFor="form-rhf-demo-email" className="text-neutral-200">
-                    Username
+                    Email
                   </FieldLabel>
                   <Input
                     {...field}

@@ -4,7 +4,7 @@ import React, { useEffect, useId, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { useOutsideClick } from "@/hooks/use-outside-click";
 
-export function SpecialExpandableCard({cards}: {cards: typeof card[]}) {
+export function SpecialExpandableCard({cards, ref: dismissRef}: {cards: typeof card[], ref?: any}) {
   const [active, setActive] = useState<(typeof card[])[number] | boolean | null>(
     null
   );
@@ -61,6 +61,7 @@ export function SpecialExpandableCard({cards}: {cards: typeof card[]}) {
                 },
               }}
               className="flex absolute top-2 right-2 items-center justify-center bg-white rounded-full h-6 w-6"
+              ref={dismissRef}
               onClick={() => setActive(null)}
             >
               <CloseIcon />
@@ -80,7 +81,7 @@ export function SpecialExpandableCard({cards}: {cards: typeof card[]}) {
                 />
               </motion.div>
 
-              <div>
+              <div className="overflow-y-auto">
                 <div className="flex justify-between items-start p-4">
                   <div className="">
                     <motion.h3
@@ -104,7 +105,7 @@ export function SpecialExpandableCard({cards}: {cards: typeof card[]}) {
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
-                    className="text-xs md:text-sm lg:text-base h-40 md:h-fit pb-10 flex flex-col items-start gap-4 overflow-auto text-neutral-50 [mask:linear-gradient(to_bottom,white,white,transparent)] [scrollbar-width:none] [-ms-overflow-style:none] [-webkit-overflow-scrolling:touch]"
+                    className="text-xs md:text-sm lg:text-base h-40 md:h-fit pb-10 flex flex-col items-start gap-4 overflow-auto text-neutral-50 [scrollbar-width:none] [-ms-overflow-style:none] [-webkit-overflow-scrolling:touch]"
                   >
                     {typeof active.content === "function"
                       ? active.content()
@@ -116,7 +117,7 @@ export function SpecialExpandableCard({cards}: {cards: typeof card[]}) {
           </div>
         ) : null}
       </AnimatePresence>
-      <ul className="max-w-2xl mx-auto w-full gap-4">
+      <ul className="max-w-2xl mx-auto w-full gap-4 space-y-4">
         {cards.map((card, index) => (
           <motion.div
             layoutId={`card-${card.title}-${id}`}
@@ -136,13 +137,13 @@ export function SpecialExpandableCard({cards}: {cards: typeof card[]}) {
               </motion.div>
               <div className="">
                 <motion.h3
-                  layoutId={`title-${card.title}-${id}`}
+                  layoutId={`title-${useId()}-${id}`}
                   className="font-medium text-neutral-200 text-center md:text-left"
                 >
                   {card.title}
                 </motion.h3>
                 <motion.p
-                  layoutId={`description-${card.description}-${id}`}
+                  layoutId={`description-${useId()}-${id}`}
                   className="text-neutral-400 text-center md:text-left"
                 >
                   {card.description}

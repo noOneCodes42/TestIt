@@ -9,7 +9,7 @@ type TabContextType = {
 const TabContext = createContext<TabContextType | undefined>(undefined);
 
 export const TabProvider = ({ children }: { children: ReactNode }) => {
-  const [currentTab, setCurrentTab] = useState("");
+  const [currentTab, setCurrentTab] = useState("quiz");
 
   return (
     <TabContext.Provider value={{ currentTab, setCurrentTab }}>

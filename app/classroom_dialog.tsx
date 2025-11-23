@@ -102,7 +102,7 @@ function UserCreateForm() {
                     id="form-rhf-demo-email"
                     className="border-neutral-800 text-white"
                     aria-invalid={fieldState.invalid}
-                    placeholder="email..."
+                    placeholder="name..."
                     autoComplete="on"
                   />
                   {fieldState.invalid && (

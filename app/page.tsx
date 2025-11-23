@@ -10,6 +10,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { fetcher } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { ClassroomDialog } from "./classroom_dialog";
+import { BookIcon, CrownIcon } from "lucide-react";
 
 export default function Home() {
 
@@ -31,9 +32,9 @@ export function TeacherPage({open, setOpen}: {open: boolean, setOpen: any}) {
   const {data} = useSWR<classroomres>(`${process.env.NEXT_PUBLIC_URL}/classrooms`, fetcher, {suspense: true})
   const teachers = data?.classrooms ?? []
   return <>
-    {teachers.length ? teachers.map(e => <div key={e.id} className="bg-neutral-primary-soft block max-w-sm border border-blue-400 h-80 rounded-xl rounded-base shadow-xs">
+    {teachers.length ? teachers.toSorted((a,b) => a.role.localeCompare(b.role)).map(e => <div key={e.id} onClick={() => window.location.assign(`/classroom/${e.role}/${e.id}`)} className="bg-neutral-primary-soft block max-w-sm border border-blue-400 h-80 rounded-xl rounded-base shadow-xs">
         <div className="h-16 bg-blue-400 rounded-tr-xl rounded-tl-xl grid place-items-center">
-          <p className="text-xl text-center text-black font-bold">{e.name}</p>
+          <p className="text-xl text-center text-black font-bold flex gap-2 items-center">{e.name} {e.role == "teacher" ? <CrownIcon></CrownIcon> : <BookIcon />}</p>
         </div>
                  <PixelatedCanvas
             src={e.teacher.image_url}

@@ -22,7 +22,9 @@ interface quiz {
 interface quiz_info {
     id: string,
     name: string,
-    completed: boolean
+    is_completed: boolean,
+    classroom_id: string;
+    created_at: string
 }
 
 interface classroom {
@@ -30,6 +32,5 @@ interface classroom {
     name: string,
     role: string,
     joined_at: string,
-    teacher: teacher,
-    quizzes: [quiz_info]
+    teacher: teacher
 }
