@@ -1,4 +1,8 @@
 import os
+import tempfile
+import json
+import io
+from uuid import UUID
 from requests import get
 from fastapi import FastAPI, File, UploadFile, Response, Request, Cookie, HTTPException, Form, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,11 +13,12 @@ from supabase import create_client, Client
 from pydantic import BaseModel
 from datetime import datetime, timedelta
 import dotenv
+
 dotenv.load_dotenv()
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
-SECRET_KEY = os.environ.get("SECRET_KEY")  # CHANGE THIS TO A SECURE RANDOM STRING IN PRODUCTION
-COOKIE_MAX_AGE = int(os.environ.get("COOKIE_MAX_AGE", 604800))  # 7 days
+SECRET_KEY = os.environ.get("SECRET_KEY") # CHANGE THIS TO A SECURE RANDOM STRING IN PRODUCTION
+COOKIE_MAX_AGE = int(os.environ.get("COOKIE_MAX_AGE", 604800)) # 7 days
 
 app = FastAPI()
 
@@ -57,11 +62,11 @@ def set_signed_cookie(response: Response, key: str, value: str):
         key=key,
         value=signed_value,
         httponly=True,
-        secure=True,  # Set to False if testing on HTTP
-        samesite="none",  # Important for cross-site cookies
+        secure=True, # Set to False if testing on HTTP
+        samesite="none", # Important for cross-site cookies
         max_age=COOKIE_MAX_AGE,
         path="/",
-        domain=".thetechtitans.vip"  # Note the leading dot for subdomains
+        domain=".thetechtitans.vip" # Note the leading dot for subdomains
     )
     print(f"Cookie set: {key} with domain .thetechtitans.vip")
 
@@ -80,6 +85,82 @@ def clear_signed_cookie(response: Response, key: str):
         domain="thetechtitans.vip"
     )
 
+# File Processing Helper Functions
+def extract_text_from_txt(content: bytes) -> str:
+    """Extract text from TXT files with multiple encoding attempts"""
+    encodings = ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1', 'utf-16']
+    
+    for encoding in encodings:
+        try:
+            text = content.decode(encoding)
+            print(f"Successfully decoded with {encoding}")
+            return text
+        except UnicodeDecodeError as e:
+            print(f"Failed to decode with {encoding}: {e}")
+            continue
+    
+    raise HTTPException(
+        status_code=400, 
+        detail="Could not read the text file. Please ensure it uses standard encoding (UTF-8 recommended)."
+    )
+
+def extract_text_from_pdf(content: bytes) -> str:
+    """Simple PDF text extraction"""
+    try:
+        from pdfminer.high_level import extract_text as pdfminer_extract_text
+        text = pdfminer_extract_text(io.BytesIO(content))
+        if text and len(text.strip()) > 10:
+            return text.strip()
+        else:
+            raise Exception("No readable text found in PDF")
+    except Exception as e:
+        print(f"PDF extraction failed: {e}")
+        raise HTTPException(
+            status_code=400, 
+            detail="PDF text extraction failed. Please upload a text file (.txt) instead, or ensure the PDF contains selectable text (not scanned images)."
+        )
+
+def extract_text_from_docx(content: bytes) -> str:
+    """Extract text from DOCX files"""
+    try:
+        import docx
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.docx') as tmp_file:
+            tmp_file.write(content)
+            tmp_file.flush()
+        
+        doc = docx.Document(tmp_file.name)
+        text = ""
+        for paragraph in doc.paragraphs:
+            text += paragraph.text + "\n"
+        
+        # Clean up temp file
+        os.unlink(tmp_file.name)
+        
+        if not text.strip():
+            raise HTTPException(status_code=400, detail="DOCX file appears to be empty")
+            
+        return text.strip()
+    except ImportError:
+        raise HTTPException(status_code=400, detail="DOCX support not available. Please install python-docx: pip install python-docx")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error reading DOCX file: {str(e)}")
+
+def extract_text_from_json(content: bytes) -> str:
+    """Extract text from JSON files"""
+    try:
+        data = json.loads(content.decode('utf-8'))
+        # Convert JSON to readable text
+        if isinstance(data, dict):
+            text_parts = []
+            for key, value in data.items():
+                text_parts.append(f"{key}: {value}")
+            return "\n".join(text_parts)
+        elif isinstance(data, list):
+            return "\n".join(str(item) for item in data)
+        else:
+            return str(data)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error reading JSON file: {str(e)}")
 
 # Pydantic Models
 class SignupBody(BaseModel):
@@ -94,21 +175,13 @@ class LoginBody(BaseModel):
     email: str
     password: str
 
-
-class QuizFormData:
-    num_question: int
+class ClassroomCreate(BaseModel):
     name: str
-    mcq: int
-    frq: int
 
-def get_quiz_form(
-    num_question: int = Form(...),
-    name: str = Form(...),
-    mcq: int = Form(...),
-    frq: int = Form(...)
-) -> QuizFormData:
-    return QuizFormData(num_question=num_question, name=name, mcq=mcq, frq=frq)
+class JoinClassroomRequest(BaseModel):
+    classroom_id: str
 
+# Routes
 @app.get("/debug-cookie-flow")
 async def debug_cookie_flow(request: Request, response: Response):
     """Comprehensive debug endpoint to test the entire cookie flow"""
@@ -125,7 +198,7 @@ async def debug_cookie_flow(request: Request, response: Response):
     response.set_cookie(
         key="regular_test_cookie",
         value="regular_cookie_value",
-        httponly=False,  # Make it accessible to JS for debugging
+        httponly=False, # Make it accessible to JS for debugging
         secure=True,
         samesite="lax",
         max_age=3600,
@@ -139,6 +212,7 @@ async def debug_cookie_flow(request: Request, response: Response):
         "test_cookie_set": test_token,
         "message": "Check your browser DevTools > Application > Cookies to see if cookies are stored"
     }
+
 @app.post("/signup")
 async def signup(body: SignupBody, response: Response):
     try:
@@ -193,10 +267,6 @@ async def logout(response: Response):
     clear_signed_cookie(response, "access_token")
     return {"status": "success"}
 
-
-class ClassroomCreate(BaseModel):
-    name: str
-
 @app.post("/classroom")
 async def create_classroom(
     classroom_data: ClassroomCreate,
@@ -232,17 +302,17 @@ async def create_classroom(
         
         # Get classroom with teacher profile from clientProfile
         result = supabase.table("classroom")\
-            .select("id, name, created_at, teacher_id")\
-            .eq("id", classroom_id)\
-            .single()\
-            .execute()
+        .select("id, name, created_at, teacher_id")\
+        .eq("id", classroom_id)\
+        .single()\
+        .execute()
         
         # Get teacher profile from clientProfile
         teacher_profile = supabase.table("clientProfile")\
-            .select("first_name, last_name, image_url, pronouns")\
-            .eq("id", teacher_id)\
-            .single()\
-            .execute()
+        .select("first_name, last_name, image_url, pronouns")\
+        .eq("id", teacher_id)\
+        .single()\
+        .execute()
         
         classroom_data = result.data
         profile_data = teacher_profile.data if teacher_profile.data else {}
@@ -265,9 +335,6 @@ async def create_classroom(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    
-class JoinClassroomRequest(BaseModel):
-    classroom_id: str
 
 @app.post("/classroom/join")
 async def join_classroom(
@@ -290,10 +357,10 @@ async def join_classroom(
         
         # Verify classroom exists and get teacher info
         classroom_result = supabase.table("classroom")\
-            .select("id, name, teacher_id")\
-            .eq("id", classroom_id)\
-            .single()\
-            .execute()
+        .select("id, name, teacher_id")\
+        .eq("id", classroom_id)\
+        .single()\
+        .execute()
         
         if not classroom_result.data:
             raise HTTPException(status_code=404, detail="Classroom not found")
@@ -302,17 +369,17 @@ async def join_classroom(
         
         # Get teacher profile from clientProfile
         teacher_profile = supabase.table("clientProfile")\
-            .select("first_name, last_name, image_url, pronouns")\
-            .eq("id", classroom["teacher_id"])\
-            .single()\
-            .execute()
+        .select("first_name, last_name, image_url, pronouns")\
+        .eq("id", classroom["teacher_id"])\
+        .single()\
+        .execute()
         
         # Check if user is already a member
         existing_member = supabase.table("classroom_members")\
-            .select("id")\
-            .eq("classroom_id", classroom_id)\
-            .eq("user_id", user_id)\
-            .execute()
+        .select("id")\
+        .eq("classroom_id", classroom_id)\
+        .eq("user_id", user_id)\
+        .execute()
         
         if existing_member.data:
             raise HTTPException(status_code=400, detail="You are already a member of this classroom")
@@ -346,7 +413,7 @@ async def join_classroom(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    
+
 @app.get("/classrooms")
 async def get_my_classrooms(request: Request):
     access_token = get_signed_cookie(request, "access_token")
@@ -364,18 +431,18 @@ async def get_my_classrooms(request: Request):
         
         # Get classrooms where user is a member with teacher profiles
         memberships = supabase.table("classroom_members")\
-            .select("""
-                role, 
-                joined_at,
-                classroom:classroom_id (
-                    id, 
-                    name, 
-                    created_at, 
-                    teacher_id
-                )
-            """)\
-            .eq("user_id", user_id)\
-            .execute()
+        .select("""
+        role, 
+        joined_at,
+        classroom:classroom_id (
+            id, 
+            name, 
+            created_at, 
+            teacher_id
+        )
+        """)\
+        .eq("user_id", user_id)\
+        .execute()
         
         classrooms = []
         for membership in memberships.data:
@@ -383,10 +450,10 @@ async def get_my_classrooms(request: Request):
             
             # Get teacher profile for each classroom
             teacher_profile = supabase.table("clientProfile")\
-                .select("first_name, last_name, image_url, pronouns")\
-                .eq("id", classroom_data["teacher_id"])\
-                .single()\
-                .execute()
+            .select("first_name, last_name, image_url, pronouns")\
+            .eq("id", classroom_data["teacher_id"])\
+            .single()\
+            .execute()
             
             teacher_data = teacher_profile.data if teacher_profile.data else {}
             
@@ -413,100 +480,97 @@ async def get_my_classrooms(request: Request):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    
+
 @app.get("/classroom/{classroom_id}")
 async def get_classroom_details(classroom_id: str, request: Request):
     access_token = get_signed_cookie(request, "access_token")
-    
     if not access_token:
         raise HTTPException(status_code=401, detail="Not authenticated")
-    
+
     try:
         user = supabase.auth.get_user(access_token)
-        
         if not user or not user.user:
             raise HTTPException(status_code=401, detail="Invalid token")
         
         user_id = user.user.id
-        
-        # Check if user is a member of this classroom
+
+        # Check membership
         membership = supabase.table("classroom_members")\
-            .select("role")\
-            .eq("classroom_id", classroom_id)\
-            .eq("user_id", user_id)\
-            .execute()
-        
+        .select("role")\
+        .eq("classroom_id", classroom_id)\
+        .eq("user_id", user_id)\
+        .execute()
+
         if not membership.data:
-            raise HTTPException(status_code=403, detail="You are not a member of this classroom")
-        
-        # Get classroom details
-        classroom_result = supabase.table("classroom")\
-            .select("id, name, created_at, teacher_id")\
-            .eq("id", classroom_id)\
-            .single()\
-            .execute()
-        
+            raise HTTPException(status_code=403, detail="Not a member of this classroom")
+
+        your_role = membership.data[0]["role"]
+
+        # Get classroom info
+        classroom = supabase.table("classroom")\
+        .select("id, name, created_at, teacher_id")\
+        .eq("id", classroom_id)\
+        .single()\
+        .execute()
+
         # Get teacher profile
         teacher_profile = supabase.table("clientProfile")\
-            .select("first_name, last_name, image_url, pronouns")\
-            .eq("id", classroom_result.data["teacher_id"])\
-            .single()\
-            .execute()
-        
-        # Get all classroom members with their profiles
+        .select("first_name, last_name, image_url, pronouns")\
+        .eq("id", classroom.data["teacher_id"])\
+        .single()\
+        .execute()
+
+        # GET ALL QUIZZES IN THIS CLASSROOM
+        quizzes_result = supabase.table("quizzes")\
+        .select("name, isCompleted, classroom_id, id, created_at")\
+        .eq("classroom_id", classroom_id) \
+        .execute()
+  
+        # print(quizzes_result.data[0])
+        # print(classroom_id)
+        # Get members
         members_result = supabase.table("classroom_members")\
-            .select("""
-                role, 
-                joined_at,
-                user_id,
-                clientProfile:user_id (
-                    first_name, 
-                    last_name, 
-                    image_url, 
-                    pronouns
-                )
-            """)\
-            .eq("classroom_id", classroom_id)\
-            .execute()
-        
-        # Format members data
+        .select("role, joined_at, user_id, clientProfile:user_id(first_name, last_name, image_url, pronouns)")\
+        .eq("classroom_id", classroom_id)\
+        .execute()
+
         members = []
-        for member in members_result.data:
-            profile_data = member.get("clientProfile", {})
+        for m in members_result.data:
+            profile = m.get("clientProfile", {}) or {}
             members.append({
-                "user_id": member["user_id"],
-                "role": member["role"],
-                "joined_at": member["joined_at"],
-                "first_name": profile_data.get("first_name"),
-                "last_name": profile_data.get("last_name"),
-                "image_url": profile_data.get("image_url"),
-                "pronouns": profile_data.get("pronouns")
+                "user_id": m["user_id"],
+                "role": m["role"],
+                "joined_at": m["joined_at"],
+                "first_name": profile.get("first_name"),
+                "last_name": profile.get("last_name"),
+                "image_url": profile.get("image_url"),
+                "pronouns": profile.get("pronouns")
             })
-        
-        teacher_data = teacher_profile.data if teacher_profile.data else {}
-        
+
+        teacher_data = teacher_profile.data or {}
+
         return {
             "status": "success",
             "classroom": {
-                "id": classroom_result.data["id"],
-                "name": classroom_result.data["name"],
-                "created_at": classroom_result.data["created_at"],
+                "id": classroom.data["id"],
+                "name": classroom.data["name"],
+                "created_at": classroom.data["created_at"],
                 "teacher": {
-                    "id": classroom_result.data["teacher_id"],
+                    "id": classroom.data["teacher_id"],
                     "first_name": teacher_data.get("first_name"),
                     "last_name": teacher_data.get("last_name"),
                     "image_url": teacher_data.get("image_url"),
                     "pronouns": teacher_data.get("pronouns")
                 }
             },
+            "quizzes": quizzes_result.data, # This shows all quizzes
             "members": members,
-            "your_role": membership.data[0]["role"]
+            "your_role": your_role
         }
-        
-    except HTTPException:
-        raise
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/classroom/{classroom_id}/students")
 async def get_classroom_students(classroom_id: str, request: Request):
     access_token = get_signed_cookie(request, "access_token")
@@ -524,30 +588,30 @@ async def get_classroom_students(classroom_id: str, request: Request):
         
         # Verify user is a teacher in this classroom
         membership = supabase.table("classroom_members")\
-            .select("role")\
-            .eq("classroom_id", classroom_id)\
-            .eq("user_id", user_id)\
-            .single()\
-            .execute()
+        .select("role")\
+        .eq("classroom_id", classroom_id)\
+        .eq("user_id", user_id)\
+        .single()\
+        .execute()
         
         if not membership.data or membership.data["role"] != "teacher":
             raise HTTPException(status_code=403, detail="Only teachers can view student list")
         
         # Get all students in this classroom with their profiles
         students_result = supabase.table("classroom_members")\
-            .select("""
-                joined_at,
-                user_id,
-                clientProfile:user_id (
-                    first_name, 
-                    last_name, 
-                    image_url, 
-                    pronouns
-                )
-            """)\
-            .eq("classroom_id", classroom_id)\
-            .eq("role", "student")\
-            .execute()
+        .select("""
+        joined_at,
+        user_id,
+        clientProfile:user_id (
+            first_name, 
+            last_name, 
+            image_url, 
+            pronouns
+        )
+        """)\
+        .eq("classroom_id", classroom_id)\
+        .eq("role", "student")\
+        .execute()
         
         students = []
         for student in students_result.data:
@@ -572,44 +636,6 @@ async def get_classroom_students(classroom_id: str, request: Request):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-async def create_classroom(request: Request):
-    access_token = get_signed_cookie(request, "access_token")
-    
-    if not access_token:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    
-    try:
-        user = supabase.auth.get_user(access_token)
-        
-        if not user or not user.user:
-            raise HTTPException(status_code=401, detail="Invalid token")
-        
-        teacher_id = user.user.id
-        
-        # Create classroom
-        classroom = supabase.table("classroom").insert({
-            "teacher_id": teacher_id
-        }).execute()
-        
-        classroom_id = classroom.data[0]["id"]
-        
-        # Get classroom with teacher profile joined
-        result = supabase.table("classroom").select(
-            "id, created_at, teacher_id, clientProfile(first_name, last_name, image_url)"
-        ).eq("id", classroom_id).single().execute()
-        
-        data = result.data
-        
-        return {
-            "status": "success",
-            "classroom_id": data["id"]
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
 @app.get("/user")
 async def get_user(request: Request):
     access_token = get_signed_cookie(request, "access_token")
@@ -629,9 +655,9 @@ async def get_user(request: Request):
         
         # Now query the clientProfile table using the UUID relation
         profile_response = supabase.table("clientProfile")\
-            .select("*")\
-            .eq("id", user_id)\
-            .execute()
+        .select("*")\
+        .eq("id", user_id)\
+        .execute()
         
         print(f"Profile query for user_id {user_id}: {profile_response}")
         
@@ -669,49 +695,206 @@ async def get_user(request: Request):
     except Exception as e:
         print(f"Error in /user endpoint: {str(e)}")
         raise HTTPException(status_code=401, detail=f"Authentication failed: {str(e)}")
-@app.post("/logout")
-async def logout(response: Response):
-    clear_signed_cookie(response, "access_token")
-    return {"status": "success"}
+
+@app.get("/classroom/{classroom_id}/quiz/{quiz_id}")
+async def fetch_quiz(quiz_id: str, classroom_id: str, request: Request):
+    access_token = get_signed_cookie(request, "access_token")
+    async def fetch_quiz(quiz_id: str, classroom_id: str, request: Request):
+        access_token = get_signed_cookie(request, "access_token")
+        if not access_token:
+            raise HTTPException(status_code=401, detail="Not authenticated")
+        try:
+            user = supabase.auth.get_user(access_token)
+            user_id = user.user.id
+            membership = supabase.table("classroom_members").select("role").eq("classroom_id", classroom_id).eq("user_id", user_id).single().execute()
+
+            quizzes_info = supabase.table("quizzes").select("id, name, isCompleted, classroom_id").eq("id", quiz_id).eq("classroom_id", classroom_id).single().execute()
+
+            if not membership.data:
+                raise HTTPException(status_code=403, detail="Not a member of this classroom")
+            completed_status = quizzes_info.data["isCompleted"]
+            user_role = membership.data["role"]
+            if user_role == "teacher" or completed_status:
+                quiz_info = supabase.table("Q&A").select("question_text, options, answers").eq("id", quiz_id).eq("classroom_id", classroom_id).single().execute()
+                return {
+                    "questionsAndAnswers": quiz_info.data
+                }
+            else:
+                student_quiz_info = supabase.table("Q&A").select("question_text, options").eq("quiz_id", quiz_id).execute()
+                return {
+                    "questions": student_quiz_info.data
+                }
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+
+    
+    
 @app.post("/generate-quiz")
 async def generate_quiz(
     request: Request,
-    data: UploadFile = File(...),
-    form_data: QuizFormData = Depends(get_quiz_form),
-    name: str = Form(...)
+    file: UploadFile = File(...),
+    name: str = Form(...),
+    num_questions: int = Form(...),
+    mcq: int = Form(...),
+    frq: int = Form(0),
+    classroom_id: str = Form(...)
 ):
     access_token = get_signed_cookie(request, "access_token")
+
     if not access_token:
+        print("No access token found in cookies")
         raise HTTPException(status_code=401, detail="Not authenticated")
-    
     try:
-        content = await data.read()
-        text_content = content.decode("utf-8")
+        # Validate the form data
+        if num_questions < 1:
+            raise HTTPException(status_code=400, detail="Number of questions must be at least 1")
         
+        if mcq < 0 or mcq > num_questions:
+            raise HTTPException(status_code=400, detail="MCQ count must be between 0 and total questions")
+        print("MCQ count validated")
+        # Validate file type
+        allowed_extensions = ['.txt', '.pdf', '.docx', '.json']
+        file_extension = os.path.splitext(file.filename.lower())[1]
+        print("File extension good")
+        if file_extension not in allowed_extensions:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"File type {file_extension} not allowed. Please use: {', '.join(allowed_extensions)}"
+            )
+
+        # Read file content
+        content = await file.read()
+        text_content = ""
+
+        print(f"Processing file: {file.filename}, Size: {len(content)} bytes, Type: {file_extension}")
+
+        # Handle different file types
+        if file_extension == '.pdf':
+            text_content = extract_text_from_pdf(content)
+        elif file_extension == '.docx':
+            text_content = extract_text_from_docx(content)
+        elif file_extension == '.json':
+            text_content = extract_text_from_json(content)
+        elif file_extension == '.txt':
+            print("Extracting text from TXT file")
+            text_content = extract_text_from_txt(content)
+        else:
+            # Final fallback - try as text
+            text_content = extract_text_from_txt(content)
+
+        if not text_content.strip():
+            raise HTTPException(status_code=400, detail="No readable text content found in the file")
+
+        print(f"Extracted text length: {len(text_content)} characters")
+        print(f"First 200 chars: {text_content[:200]}...")
+
+        # Limit text content to avoid overwhelming the AI
+        if len(text_content) > 8000:
+            text_content = text_content[:8000] + "... [content truncated]"
+
+        # Ollama prompt
         prompt = f"""
-You are a question generator. Based on the following content: {text_content}, generate {form_data.mcq} multiple choice questions, each with four answer options and the correct answer identified.
+Based on this content, generate exactly {mcq} multiple-choice questions:
 
-Use the following format for each question:
-Q: <question> | A: <option1> | B: <option2> | C: <option3> | D: <option4> | Correct: <option_letter>
+{text_content}
 
-- All questions must be directly based on the provided content.
-- Always include exactly four answer options (A, B, C, D).
-- Only list the correct answer's option letter after 'Correct:'.
+Each question must have:
+- Clear question text
+- 4 options (A, B, C, D)
+- One correct answer
 
-Generate clear, concise, and relevant questions and answer options from the source material.
+Format each question like this:
+Q: [question text]
+A: [option A]
+B: [option B]
+C: [option C]
+D: [option D]
+Correct: [A/B/C/D]
+
+Make questions relevant to the content.
 """
-        
-        ollama_response = ollama.generate(model="gpt-oss:120b", prompt=prompt)
-        ai_response = ollama_response.get("response", "") if isinstance(ollama_response, dict) else str(ollama_response)
-        generatedResponse = ollama_response['response']
-        questions = generatedResponse.split('Q: ')[1:]  # Skip the first empty element
-        parsed_questions = []
-        questions_list = [q['question'] for q in parsed_questions]
-        answers_list = [q['answers'] for q in parsed_questions]
-        correct_answers = [q['correct'] for q in parsed_questions]
-        supabase.table("quizzes").insert(name)
 
-        return {"status": "success"}
-    
+        ollama_response = ollama.generate(model="gpt-oss:120b", prompt=prompt)
+        raw_text = ollama_response["response"]
+
+        # Parse questions
+        questions = []
+        for block in raw_text.strip().split("Q:")[1:]:
+            lines = [line.strip() for line in block.strip().split("\n") if line.strip()]
+            if len(lines) < 6:
+                continue
+            
+            question_text = lines[0]
+            options = [
+                lines[1].replace("A:", "").strip(),
+                lines[2].replace("B:", "").strip(),
+                lines[3].replace("C:", "").strip(),
+                lines[4].replace("D:", "").strip()
+            ]
+            correct_letter = lines[5].replace("Correct:", "").strip().upper()
+            
+            if correct_letter not in {"A", "B", "C", "D"}:
+                continue
+            
+            correct_answer = [options[ord(correct_letter) - 65]]
+            
+            questions.append({
+                "question_text": question_text,
+                "options": options,
+                "correctAnswer": correct_answer,
+                "type": "mcq"
+            })
+
+        if not questions:
+            raise HTTPException(status_code=400, detail="No valid questions generated. Please try with different content.")
+
+        # Get user ID from token
+        user = supabase.auth.get_user(access_token)
+        if not user or not user.user:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        
+        user_id = user.user.id
+
+
+        # Create quiz
+        quiz_resp = supabase.table("quizzes").insert({
+            "user_id": user_id,
+            "name": name,
+            "classroom_id": classroom_id,
+            "isCompleted": False
+        }).execute()
+
+        quiz_id = quiz_resp.data[0]["id"]
+
+        # Save questions
+        quiz_questions = []
+        for q in questions:
+            q["quiz_id"] = quiz_id
+            quiz_questions.append(q)
+        
+        if quiz_questions:
+            supabase.table("Q&A").insert(quiz_questions).execute()
+
+        return {
+            "status": "success",
+            "quiz_id": quiz_id,
+            "classroom_id": classroom_id,
+            "questions_generated": len(questions),
+            "details": {
+                "name": name,
+                "total_questions": num_questions,
+                "mcq_count": mcq,
+                "frq_count": frq,
+                "file_processed": file.filename
+            }
+        }
+
+    except HTTPException:
+        raise
     except Exception as e:
+        print(f"Error generating quiz: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
