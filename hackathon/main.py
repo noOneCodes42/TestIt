@@ -1,10 +1,11 @@
+from multiprocessing.dummy import Array
 import os
 import tempfile
 import json
 import io
 from uuid import UUID
 from requests import get
-from fastapi import FastAPI, File, UploadFile, Response, Request, Cookie, HTTPException, Form, Depends
+from fastapi import FastAPI, File, UploadFile, Response, Request, Cookie, HTTPException, Form, Depends, Body
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
@@ -13,7 +14,7 @@ from supabase import create_client, Client
 from pydantic import BaseModel
 from datetime import datetime, timedelta
 import dotenv
-
+from typing import List
 dotenv.load_dotenv()
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
@@ -522,7 +523,7 @@ async def get_classroom_details(classroom_id: str, request: Request):
 
         # GET ALL QUIZZES IN THIS CLASSROOM
         quizzes_result = supabase.table("quizzes")\
-        .select("name, isCompleted, classroom_id, id, created_at")\
+        .select("name, is_completed, classroom_id, id, created_at")\
         .eq("classroom_id", classroom_id) \
         .execute()
   
@@ -698,40 +699,122 @@ async def get_user(request: Request):
 
 @app.get("/classroom/{classroom_id}/quiz/{quiz_id}")
 async def fetch_quiz(quiz_id: str, classroom_id: str, request: Request):
+
     access_token = get_signed_cookie(request, "access_token")
-    async def fetch_quiz(quiz_id: str, classroom_id: str, request: Request):
-        access_token = get_signed_cookie(request, "access_token")
-        if not access_token:
-            raise HTTPException(status_code=401, detail="Not authenticated")
-        try:
-            user = supabase.auth.get_user(access_token)
-            user_id = user.user.id
-            membership = supabase.table("classroom_members").select("role").eq("classroom_id", classroom_id).eq("user_id", user_id).single().execute()
+    if not access_token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        user = supabase.auth.get_user(access_token)
+        user_id = user.user.id
+        membership = supabase.table("classroom_members").select("role").eq("classroom_id", classroom_id).eq("user_id", user_id).single().execute()
 
-            quizzes_info = supabase.table("quizzes").select("id, name, isCompleted, classroom_id").eq("id", quiz_id).eq("classroom_id", classroom_id).single().execute()
+        quizzes_info = supabase.table("quizzes").select("id, name, is_completed, classroom_id").eq("id", quiz_id).eq("classroom_id", classroom_id).single().execute()
+        if not membership.data:
+            raise HTTPException(status_code=403, detail="Not a member of this classroom")
+        completed_status = quizzes_info.data["is_completed"]
+        user_role = membership.data["role"]
+        
+        print(f"User role: {user_role}, Quiz completed: {completed_status}, {quiz_id}")
 
-            if not membership.data:
-                raise HTTPException(status_code=403, detail="Not a member of this classroom")
-            completed_status = quizzes_info.data["isCompleted"]
-            user_role = membership.data["role"]
-            if user_role == "teacher" or completed_status:
-                quiz_info = supabase.table("Q&A").select("question_text, options, answers").eq("id", quiz_id).eq("classroom_id", classroom_id).single().execute()
-                return {
-                    "questionsAndAnswers": quiz_info.data
-                }
+        if user_role == "teacher" or completed_status:
+            quiz_info = supabase.table("Q&A").select("question_text, options, correct_answer").eq("quiz_id", quiz_id).execute()
+            print(quiz_info.data)
+            return quiz_info.data
+                
+                
+        else:
+            student_quiz_info = supabase.table("Q&A").select("question_text, options").eq("quiz_id", quiz_id).execute()
+
+            return student_quiz_info.data
+            
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/results/{quiz_id}/answers/{answer}")
+async def submit_quiz_results(quiz_id: str, request: Request, answer: str):
+    access_token = get_signed_cookie(request, "access_token")
+    if not access_token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        user = supabase.auth.get_user(access_token)
+        user_id = user.user.id
+        
+        # Convert user answers string to list
+        answers_list = answer.split(",")
+        
+        # Get correct answers from Q&A table (not quizzes table)
+        quiz_questions = supabase.table("Q&A")\
+            .select("correct_answer")\
+            .eq("quiz_id", quiz_id)\
+            .execute()
+        
+        # Extract correct answers into a list
+        correct_answers_list = []
+        for question in quiz_questions.data:
+            # Handle if correct_answer is stored as array or string
+            correct_answer = question["correct_answer"]
+            if isinstance(correct_answer, list) and len(correct_answer) > 0:
+                correct_answers_list.append(correct_answer[0])  # Get first element if it's an array
             else:
-                student_quiz_info = supabase.table("Q&A").select("question_text, options").eq("quiz_id", quiz_id).execute()
-                return {
-                    "questions": student_quiz_info.data
-                }
+                correct_answers_list.append(str(correct_answer).strip())
+        
+        print(f"User answers: {answers_list}")
+        print(f"Correct answers: {correct_answers_list}")
+        
+        # Calculate score
+        score = 0
+        total_questions = len(correct_answers_list)
+        
+        # Check each answer
+        for i in range(min(len(answers_list), total_questions)):
+            user_answer = answers_list[i].strip().upper()
+            correct_answer = correct_answers_list[i].strip().upper()
+            
+            if user_answer == correct_answer:
+                score += 1
+                print(f"Question {i+1}: ✓ Correct")
+            else:
+                print(f"Question {i+1}: ✗ Wrong (User: {user_answer}, Correct: {correct_answer})")
+        
+        # Calculate percentage
+        percentage = (score / total_questions) * 100 if total_questions > 0 else 0
+        
+        # Save results to database
+        result_data = {
+            "student_id": user_id,
+            "quiz_id": quiz_id,
+            "answer": answers_list,
+            "score": score
+        }
+        
+        # Insert into quiz_results table (create this table if it doesn't exist)
+        supabase.table("quiz_submissions").insert(result_data).execute()
+        
+        # Mark quiz as completed for this user
+        supabase.table("quizzes")\
+            .update({"is_completed": True})\
+            .eq("id", quiz_id)\
+            .execute()
+        
+        return {
+            "status": "success",
+            "score": score,
+            "total_questions": total_questions,
+            "percentage": percentage,
+            "user_answers": answers_list,
+            "correct_answers": correct_answers_list
+        }
 
-        except HTTPException:
-            raise
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error submitting quiz: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-
-    
     
 @app.post("/generate-quiz")
 async def generate_quiz(
@@ -845,7 +928,7 @@ Make questions relevant to the content.
             questions.append({
                 "question_text": question_text,
                 "options": options,
-                "correctAnswer": correct_answer,
+                "correct_answer": correct_answer,
                 "type": "mcq"
             })
 
@@ -865,7 +948,7 @@ Make questions relevant to the content.
             "user_id": user_id,
             "name": name,
             "classroom_id": classroom_id,
-            "isCompleted": False
+            "is_completed": False
         }).execute()
 
         quiz_id = quiz_resp.data[0]["id"]
